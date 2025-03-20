@@ -74,15 +74,15 @@ class Tokenizer:
         for seq in tqdm(seqs, desc=f"Tokenizing {self.type} sequences"):
             if len(seq) > self.max_length-2:
                 raise ValueError(f"Sequence length of {seq} is greater than the maximum length of {self.max_length}-2")
-            seq = ["<BOS>"]+self._tokenize(seq)+["<EOS>"]
-            encoded_seq = [self.vocab.get(token, self.vocab["<UNK>"]) for token in seq]
+            seq = ["<bos>"]+self._tokenize(seq)+["<eos>"]
+            encoded_seq = [self.vocab.get(token, self.vocab["<unk>"]) for token in seq]
             encoded.append(encoded_seq)
 
         padded = []
         masks = []
         if self.padding:
             for seq in tqdm(encoded, desc=f"Padding {self.type} sequences"):
-                seq += [self.vocab["<PAD>"]] * (self.max_length - len(seq))
+                seq += [self.vocab["<pad>"]] * (self.max_length - len(seq))
                 padded.append(seq)
                 masks.append([1] * len(seq) + [0] * (self.max_length - len(seq)))
         else:
@@ -94,6 +94,20 @@ class Tokenizer:
             torch.tensor(padded, dtype=torch.long).squeeze(),
             torch.tensor(masks, dtype=torch.long).squeeze(),
         )
+
+    def decode(self, seqs: torch.Tensor) -> List[str]:
+        decoded = []
+        for seq in seqs:
+            decoded_seq = []
+            for token in seq:
+                if list(self.vocab.keys())[list(self.vocab.values()).index(token)] == "<bos>":
+                    continue
+                elif list(self.vocab.keys())[list(self.vocab.values()).index(token)] == "<eos>":
+                    break
+                else:
+                    decoded_seq.append(list(self.vocab.keys())[list(self.vocab.values()).index(token)])
+            decoded.append("".join(decoded_seq))
+        return decoded
 
 def analyze_data(rna_seqs: List[str], protein_seqs: List[str], labels: List[str]) -> Tuple[Dict[str, int], Dict[str, int], int]:
     """
@@ -198,7 +212,6 @@ class RPIDataset(LightningDataModule):
         self.train_data = None
         self.val_data = None
         self.test_data = None
-
 
     def setup(self, stage=None):
         self._shuffle_data()
