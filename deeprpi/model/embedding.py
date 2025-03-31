@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from torch import device
 from ..config import glob
+from multimolecule import RnaBertConfig, RnaBertModel, RnaTokenizer
 
 
 def load_esm() -> Tuple[nn.Module, esm.Alphabet]:
@@ -16,12 +17,17 @@ def load_esm() -> Tuple[nn.Module, esm.Alphabet]:
     print("Model loaded successfully.")
     return model, alphabet
 
-def load_rnabert() -> None:
+def load_rnabert() -> Tuple[nn.Module, RnaTokenizer]:
     """
     Load the RNA BERT model.
-    :return: The RNA BERT model.
+    :return: The RNA BERT model and tokenizer.
     """
-    pass
+    config = RnaBertConfig()
+    model = RnaBertModel(config)
+    tokenizer = RnaTokenizer.from_pretrained("multimolecule/rna")
+    model.eval() 
+    print("RNAbert model loaded successfully.")
+    return model, tokenizer
 
 class ESMEmbedding:
     """
@@ -71,8 +77,82 @@ class RNABertEmbedding:
     """
     To generate RNA embeddings using a BERT model.
     """
-    def __init__(self):
-        pass
+    def __init__(self, model, tokenizer, device: device, max_length: int=440):
+        """
+        Initialize RNABertEmbedding.
+        
+        Args:
+            model: The RNAbert model.
+            tokenizer: The RNAbert tokenizer.
+            device: The device on which to run the model.
+            max_length: Maximum sequence length for tokenization.
+        """
+        super().__init__()
+        self.device = device
+        self.model = model.to(self.device)
+        self.tokenizer = tokenizer
+        self.max_length = max_length
 
-    def __call__(self, raw_seqs):
-        pass
+    def __call__(self, raw_seqs, return_attention: bool = False) -> tuple[Any, list[Any], Any]:
+        """
+        Generate embeddings for the given RNA sequences.
+        
+        Args:
+            raw_seqs: The RNA sequences for which embeddings are to be generated.
+                     Can be a list of strings or tokenized sequences.
+            return_attention: Whether to return attention matrices.
+        
+        Returns:
+            A tuple containing:
+            - The embeddings for the given sequences.
+            - Attention matrices if return_attention=True, else None.
+            - Sequence lengths.
+        """
+        start_token = glob.RNA_BASES['<bos>']
+        end_token = glob.RNA_BASES['<eos>']
+        idx_to_token = {v: k for k, v in glob.RNA_BASES.items()}
+        seqs = []
+        for seq in raw_seqs:
+            start_idx = list(seq).index(start_token) + 1
+            end_idx = list(seq).index(end_token)
+            seq_str = ''.join([idx_to_token[int(idx)] for idx in seq[start_idx:end_idx]])
+            seqs.append(seq_str)
+        # Use tokenizer to process sequences
+        inputs = self.tokenizer(
+            seqs,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+            max_length=self.max_length
+        ).to(self.device)
+        
+        # Calculate sequence lengths (excluding padding tokens)
+        batch_lens = (inputs['attention_mask'] == 1).sum(1)
+        
+        # Get embedding vectors and optional attention matrices
+        with torch.no_grad():
+            # Call model with output_attentions if requested
+            outputs = self.model(
+                **inputs,
+                output_attentions=return_attention
+            )
+            
+            # Get embedding vectors
+            embeddings = outputs["pooler_output"]
+            
+            # Process attention matrices if requested
+            attention_matrices = None
+            if return_attention:
+                # Get attention from the last layer
+                last_layer_attention = outputs.attentions[-1]
+                
+                # Average across all attention heads
+                attention_avg = last_layer_attention.mean(dim=1)
+                
+                # Extract attention matrices for each sequence based on its actual length
+                attention_matrices = []
+                for i, seq_len in enumerate(batch_lens):
+                    seq_len = seq_len.item()
+                    attention_matrices.append(attention_avg[i, :seq_len, :seq_len])
+        
+        return embeddings, attention_matrices, batch_lens

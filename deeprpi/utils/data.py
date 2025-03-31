@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Union
 from numpy import ndarray
 from deeprpi.config.glob import RNA_BASES, AMINO_ACIDS
 from pytorch_lightning import LightningDataModule
@@ -69,7 +69,7 @@ class Tokenizer:
     def _tokenize(seq: str) -> List[str]:
         return [token for token in seq.upper()]
 
-    def encode(self, seqs: List[str]) -> Tuple[ndarray, ndarray] | Tuple[torch.Tensor, torch.Tensor]:
+    def encode(self, seqs: List[str]) -> Union[Tuple[ndarray, ndarray], Tuple[torch.Tensor, torch.Tensor]]:
         encoded = []
         for seq in tqdm(seqs, desc=f"Tokenizing {self.type} sequences"):
             if len(seq) > self.max_length-2:
