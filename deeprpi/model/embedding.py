@@ -119,6 +119,18 @@ class ProteinFeatureExtractor:
             weights = weights / (weights.sum(dim=1, keepdim=True) + 1e-6)
             pooled_emb = (embeddings * weights.unsqueeze(-1)).sum(dim=1)
             return pooled_emb, self._get_contact_stats(contact_maps), None
+        
+    def _get_contact_stats(self, contact_maps):
+        """
+        Compute statistics from contact maps.
+
+        :param contact_maps: Protein contact maps
+        :return: List of dictionaries containing contact statistics
+        """
+        return [{
+            'global_density': cmap.mean().item(),
+            'local_density': cmap.diagonal(offset=1).mean().item()
+            }for cmap in contact_maps]
 
 class ESMEmbedding:
     """
