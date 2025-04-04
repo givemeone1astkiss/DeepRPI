@@ -1,11 +1,11 @@
-from typing import Tuple, Any
+from typing import Tuple, Any, Dict, List, Union
 import esm
 import torch
 import torch.nn as nn
-from torch import device
+from torch import device, Tensor
+import numpy as np
 from ..config import glob
 from multimolecule import RnaBertConfig, RnaBertModel, RnaTokenizer
-
 
 def load_esm() -> Tuple[nn.Module, esm.Alphabet]:
     """
@@ -28,6 +28,97 @@ def load_rnabert() -> Tuple[nn.Module, RnaTokenizer]:
     model.eval() 
     print("RNAbert model loaded successfully.")
     return model, tokenizer
+
+class ProteinFeatureExtractor:
+    """
+    A feature extractor for protein sequences using ESM model.
+    Can extract both token-level and sequence-level features.
+    """
+
+    def __init__(self, model = None, alphabet = None, device = None):
+        """
+        Initialize the feature extractor.
+
+        :param model: Optional pre-loaded ESM model
+        :param alphabet: Optional pre-loaded ESM alphabet
+        :param device: Target device (CPU/GPU)
+        """
+
+        # Move model to target device and set to evaluation mode
+        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # Initialize batch converter for sequence processing
+        if model is None or alphabet is None:
+            self.model, alphabet = load_esm()
+        else:
+            self.model = model
+            self.alphabet = alphabet
+
+        # Move model to target device and set to evaluation mode
+        self.model = self.model.to(self.device).eval()
+
+        # Initialize batch converter for sequence processing
+        self.batch_converter = self.alphabet.get_batch_converter()
+
+        # Freeze all model parameters
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+    def __call__(self, raw_seqs, output_lever = 'token'):
+        """
+        Extract features from protein sequences.
+
+        :param raw_seqs: Input protein sequences (encoded)
+        :param output_lever: 'token' for per-residue features or
+                             'sequence' for pooled features
+        :return: Tuple containing features and contact information
+        """
+
+        # Get start and end tokens for sequence processing
+        start_token = glob.AMINO_ACIDS['<bos>']
+        end_token = glob.AMINO_ACIDS['<eos>']
+        idx_to_token = {v: k for k, v in glob.AMINO_ACIDS.items()}
+
+        # Convert encoded sequences to amino acid strings
+        seqs = []
+        for seq in raw_seqs:
+            # Locate start and end positions in sequence
+            start_idx = list(seq).index(start_token) + 1
+            end_idx = list(seq).index(end_token)
+            # Convert to amino acid string
+            seq_str = ''.join([idx_to_token[int(idx)] for idx in seq[start_idx:end_idx]])
+            seqs.append(seq_str)
+
+        # Prepare input data for the model
+        data = [(f"protein{i}", seq) for i, seq in enumerate(seqs)]
+        batch_labels, batch_strs, batch_tokens = self.batch_converter(data)
+        batch_tokens = batch_tokens.to(self.device)
+
+
+        with torch.no_grad():
+            results = self.model(batch_tokens, repr_layers=[33], return_contacts = True)
+
+        # Return features based on output level
+        if output_lever == 'token':
+            # Token-level feature extraction
+            batch_lens = (batch_tokens != self.alphabet.padding_idx).sum(1)
+            contact_maps = [results["contacts"][i][:l, :l] for i, l in enumerate(batch_lens)]
+            return  results["representations"][33], contact_maps, batch_lens
+        else:
+            # Sequence-level feature extraction
+            embeddings = results["representations"][33]
+            contact_maps = results["contacts"]
+
+            # Ensure consistent sequence length
+            seq_len = min(embeddings.size(1), contact_maps.size(1))
+            embeddings = embeddings[:, :seq_len, :]
+            contact_maps = contact_maps[:, :seq_len, :seq_len]
+
+            # Perform attention-based pooling using contact maps as weights
+            weights = contact_maps.mean(dim=2)
+            weights = weights / (weights.sum(dim=1, keepdim=True) + 1e-6)
+            pooled_emb = (embeddings * weights.unsqueeze(-1)).sum(dim=1)
+            return pooled_emb, self._get_contact_stats(contact_maps), None
 
 class ESMEmbedding:
     """
