@@ -229,7 +229,7 @@ class RNABertEmbedding:
             )
             
             # Get embedding vectors
-            embeddings = outputs["pooler_output"]
+            embeddings = outputs["last_hidden_state"]
             
             # Process attention matrices if requested
             attention_matrices = None
