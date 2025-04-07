@@ -4,3 +4,7 @@ pandas~=2.2.3
 pytorch-lightning~=2.4.0
 tqdm~=4.67.1
 multimolecule~=0.0.6
+wrapt~=1.17.
+fair-esm~=2.0.0
+termcolor~=2.1.0
+matplotlib~=3.10.0

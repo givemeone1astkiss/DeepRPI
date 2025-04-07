@@ -1,4 +1,4 @@
-from typing import Tuple, Any, Dict, List, Union
+from typing import Tuple, Any, Dict, List, Union,Optional
 import esm
 import torch
 import torch.nn as nn
@@ -119,6 +119,8 @@ class ProteinFeatureExtractor:
             weights = weights / (weights.sum(dim=1, keepdim=True) + 1e-6)
             pooled_emb = (embeddings * weights.unsqueeze(-1)).sum(dim=1)
             return pooled_emb, self._get_contact_stats(contact_maps), None
+    def _get_contact_stats(self,contact_maps):
+        pass    
 
 class ESMEmbedding:
     """
@@ -184,7 +186,7 @@ class RNABertEmbedding:
         self.tokenizer = tokenizer
         self.max_length = max_length
 
-    def __call__(self, raw_seqs, return_attention: bool = False) -> tuple[Any, list[Any], Any]:
+    def __call__(self, raw_seqs, return_attention: bool = False) -> tuple[Any, Optional[list[Any]], Any]:
         """
         Generate embeddings for the given RNA sequences.
         
@@ -229,7 +231,7 @@ class RNABertEmbedding:
             )
             
             # Get embedding vectors
-            embeddings = outputs["pooler_output"]
+            embeddings = outputs["last_hidden_state"]
             
             # Process attention matrices if requested
             attention_matrices = None
