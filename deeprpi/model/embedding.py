@@ -1,15 +1,17 @@
-from typing import Tuple, Any, Dict, List, Union
+from typing import Tuple, Any
 import esm
 import torch
 import torch.nn as nn
-from torch import device, Tensor
-import numpy as np
+from torch import device
 from ..config import glob
 from multimolecule import RnaBertConfig, RnaBertModel, RnaTokenizer
 
-def load_esm() -> Tuple[nn.Module, esm.Alphabet]:
+
+def load_esm(use_pooling: bool = False, output_dim: int = None) -> Tuple[nn.Module, esm.Alphabet]:
     """
     Load the ESM-1b model.
+    :param use_pooling: Whether to use pooling layer
+    :param output_dim: Dimension of the output embeddings. If None, same as model's embedding dimension.
     :return: The ESM-1b model.
     """
     model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
@@ -17,9 +19,11 @@ def load_esm() -> Tuple[nn.Module, esm.Alphabet]:
     print("Model loaded successfully.")
     return model, alphabet
 
-def load_rnabert() -> Tuple[nn.Module, RnaTokenizer]:
+def load_rnabert(use_pooling: bool = False, output_dim: int = None) -> Tuple[nn.Module, RnaTokenizer]:
     """
     Load the RNA BERT model.
+    :param use_pooling: Whether to use pooling layer
+    :param output_dim: Dimension of the output embeddings. If None, same as model's hidden size.
     :return: The RNA BERT model and tokenizer.
     """
     config = RnaBertConfig()
@@ -120,22 +124,31 @@ class ProteinFeatureExtractor:
             pooled_emb = (embeddings * weights.unsqueeze(-1)).sum(dim=1)
             return pooled_emb, self._get_contact_stats(contact_maps), None
 
+
 class ESMEmbedding:
     """
     To generate protein embeddings using ESM-1b model.
     """
 
-    def __init__(self, model, alphabet, device: device):
+    def __init__(self, model, alphabet, device: device, use_pooling: bool = False, output_dim: int = None):
         super().__init__()
         self.device = device
         self.model = model.to(self.device)
         self.alphabet = alphabet
         self.batch_converter = alphabet.get_batch_converter()
+        
+        # Add pooling layer
+        self.pooling = None
+        if use_pooling:
+            # Get embedding dimension from ESM model
+            embedding_dim = model.embed_tokens.embedding_dim
+            self.pooling = ProteinEmbeddingPooling(embedding_dim=embedding_dim, output_dim=output_dim).to(device)
 
-    def __call__(self, raw_seqs) -> tuple[Any, list[Any], Any]:
+    def __call__(self, raw_seqs, pool_embeddings: bool = False) -> tuple[Any, list[Any], Any]:
         """
         Generate embeddings for the given sequences. This step is done by a pretrained model.
         :param raw_seqs: The sequences for which embeddings are to be generated.
+        :param pool_embeddings: Whether to pool token-level embeddings into sequence-level embeddings
         :return: The embeddings for the given sequences.
         """
         # Extract start and end token indices
@@ -162,13 +175,25 @@ class ESMEmbedding:
         # Extract the attention contacts for each sequence.
         for i, (contact, seq_len) in enumerate(zip(results["contacts"], batch_lens)):
             attention_contacts.append(results["contacts"][i][:seq_len, :seq_len])
-        return results["representations"][33], attention_contacts, batch_lens
+        
+        # Get token-level embeddings
+        token_embeddings = results["representations"][33]
+        
+        # If pooling is needed
+        if pool_embeddings and self.pooling is not None:
+            # Create attention mask
+            attention_mask = (batch_tokens != self.alphabet.padding_idx).float()
+            # Apply pooling
+            sequence_embeddings = self.pooling(token_embeddings, attention_mask)
+            return sequence_embeddings, attention_contacts, batch_lens
+        
+        return token_embeddings, attention_contacts, batch_lens
 
 class RNABertEmbedding:
     """
     To generate RNA embeddings using a BERT model.
     """
-    def __init__(self, model, tokenizer, device: device, max_length: int=440):
+    def __init__(self, model, tokenizer, device: device, max_length: int=440, use_pooling: bool = False, output_dim: int = None):
         """
         Initialize RNABertEmbedding.
         
@@ -177,14 +202,23 @@ class RNABertEmbedding:
             tokenizer: The RNAbert tokenizer.
             device: The device on which to run the model.
             max_length: Maximum sequence length for tokenization.
+            use_pooling: Whether to use pooling layer
+            output_dim: Dimension of the output embeddings. If None, same as model's hidden size.
         """
         super().__init__()
         self.device = device
         self.model = model.to(self.device)
         self.tokenizer = tokenizer
         self.max_length = max_length
+        
+        # Add pooling layer
+        self.pooling = None
+        if use_pooling:
+            # Get embedding dimension from RNAbert model
+            embedding_dim = model.config.hidden_size
+            self.pooling = ProteinEmbeddingPooling(embedding_dim=embedding_dim, output_dim=output_dim).to(device)
 
-    def __call__(self, raw_seqs, return_attention: bool = False) -> tuple[Any, list[Any], Any]:
+    def __call__(self, raw_seqs, return_attention: bool = False, pool_embeddings: bool = False) -> tuple[Any, list[Any], Any]:
         """
         Generate embeddings for the given RNA sequences.
         
@@ -192,6 +226,7 @@ class RNABertEmbedding:
             raw_seqs: The RNA sequences for which embeddings are to be generated.
                      Can be a list of strings or tokenized sequences.
             return_attention: Whether to return attention matrices.
+            pool_embeddings: Whether to pool token-level embeddings into sequence-level embeddings
         
         Returns:
             A tuple containing:
@@ -228,8 +263,17 @@ class RNABertEmbedding:
                 output_attentions=return_attention
             )
             
-            # Get embedding vectors
-            embeddings = outputs["last_hidden_state"]
+            # Get token-level embeddings
+            token_embeddings = outputs["last_hidden_state"]
+            
+            # If pooling is needed
+            if pool_embeddings and self.pooling is not None:
+                # Apply pooling
+                sequence_embeddings = self.pooling(token_embeddings, inputs['attention_mask'])
+                embeddings = sequence_embeddings
+            else:
+                # Use default pooling output
+                embeddings = outputs["pooler_output"]
             
             # Process attention matrices if requested
             attention_matrices = None
@@ -247,3 +291,86 @@ class RNABertEmbedding:
                     attention_matrices.append(attention_avg[i, :seq_len, :seq_len])
         
         return embeddings, attention_matrices, batch_lens
+
+class ProteinEmbeddingPooling(nn.Module):
+    """
+    Advanced pooling class for converting token-level protein embeddings to sequence-level embeddings.
+    Uses self-attention mechanism to capture global dependencies in the sequence.
+    """
+    
+    def __init__(self, embedding_dim: int, output_dim: int = None, dropout: float = 0.1):
+        """
+        Initialize the protein embedding pooling class.
+        
+        Args:
+            embedding_dim: Dimension of the input embedding vectors
+            output_dim: Dimension of the output embeddings. If None, same as input dimension.
+            dropout: Dropout rate
+        """
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.output_dim = output_dim if output_dim is not None else embedding_dim
+        self.dropout = nn.Dropout(dropout)
+        
+        # Self-attention pooling
+        self.query = nn.Linear(embedding_dim, embedding_dim)
+        self.key = nn.Linear(embedding_dim, embedding_dim)
+        self.value = nn.Linear(embedding_dim, embedding_dim)
+        self.scale = embedding_dim ** -0.5
+        
+        # Output projection layer for further processing of pooled representations
+        self.output_projection = nn.Sequential(
+            nn.Linear(embedding_dim, self.output_dim),
+            nn.LayerNorm(self.output_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+    
+    def forward(self, embeddings: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
+        """
+        Convert token-level embeddings to sequence-level embeddings.
+        
+        Args:
+            embeddings: Embedding tensor of shape [batch_size, seq_len, embedding_dim]
+            attention_mask: Attention mask of shape [batch_size, seq_len], 1 for valid tokens, 0 for padding tokens
+            
+        Returns:
+            Sequence-level embeddings of shape [batch_size, output_dim]
+        """
+        batch_size, seq_len, _ = embeddings.shape
+        
+        # If no attention mask is provided, assume all tokens are valid
+        if attention_mask is None:
+            attention_mask = torch.ones(batch_size, seq_len, device=embeddings.device)
+        
+        # Expand attention mask to match embedding dimensions
+        attention_mask = attention_mask.unsqueeze(-1)
+        
+        # Self-attention pooling
+        # Compute query, key, and value
+        query = self.query(embeddings)
+        key = self.key(embeddings)
+        value = self.value(embeddings)
+        
+        # Calculate attention scores
+        attention_scores = torch.matmul(query, key.transpose(-2, -1)) * self.scale
+        
+        # Set attention scores for padding positions to a very small value
+        attention_scores = attention_scores.masked_fill(
+            attention_mask.squeeze(-1).unsqueeze(1) == 0, -1e9
+        )
+        
+        # Apply softmax to get attention weights
+        attention_weights = torch.softmax(attention_scores, dim=-1)
+        
+        # Weighted sum to get sequence representation
+        context = torch.matmul(attention_weights, value)
+        
+        # Take the representation of the first token as the sequence representation
+        # Other strategies like averaging or taking maximum can also be used
+        sequence_embedding = context[:, 0, :]
+        
+        # Apply output projection
+        sequence_embedding = self.output_projection(sequence_embedding)
+        
+        return sequence_embedding
