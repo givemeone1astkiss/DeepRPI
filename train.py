@@ -42,17 +42,7 @@ def main():
     """
     Main function
     """
-   
-    class Args:
-        data_path = "data/NPInter2.csv"
-        batch_size = 8
-        num_workers = 4
-        max_epochs = 10
-        hidden_dim = 256
-        dropout = 0.1
-        seed = 42
-    
-    args = Args()
+    args = parse_args()
     
     # Set random seed
     set_seed(args.seed)

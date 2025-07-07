@@ -1,5 +1,5 @@
 # DeepRPI
-Deep learning-based RNA-protein interaction prediction tool, official repository for dry lab of iGEM 2025 PekingHSC.
+Deep learning-based RNA-protein interaction prediction tool, official model  for dry lab of iGEM 2025 PekingHSC.
 
 ## Project Overview
 
@@ -37,10 +37,7 @@ DeepRPI/
 ## Installation
 
 1. Clone the repository:
-```bash
-git clone https://github.com/PekingHSC-iGEM/DeepRPI.git
-cd DeepRPI
-```
+
 
 2. Install dependencies:
 ```bash
@@ -108,7 +105,6 @@ If you use DeepRPI in your research, please cite our work:
 @article{DeepRPI2025,
   title={DeepRPI: Deep learning-based RNA-protein interaction prediction with cross-attention mechanism},
   author={PekingHSC-iGEM Team},
-  journal={TBD},
   year={2025}
 }
 ```

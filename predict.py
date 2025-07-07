@@ -38,16 +38,7 @@ def main():
     """
     Main function
     """
-    
-    # fill your own parameters
-    class Args:
-        protein = "GUGCACA"
-        rna = "MAELQF"
-        checkpoint = ".ckpt"
-        output_dir = "prediction_results"
-        plot_attention = True
-    
-    args = Args()
+    args = parse_args()
     
     # Ensure output directory exists
     output_dir = Path(args.output_dir)

@@ -41,16 +41,7 @@ def main():
     """
     Main function
     """
-   
-    class Args:
-        data_path = "data/NPInter2.csv"
-        checkpoint = ".ckpt" # fill your own path
-        output_dir = "evaluation_results"
-        save_attention = True
-        eval_val = False  
-        seed = 42
-    
-    args = Args()
+    args = parse_args()
     
     # Set random seed
     set_seed(args.seed)
