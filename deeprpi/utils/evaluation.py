@@ -1,31 +1,26 @@
 import torch
-import pytorch_lightning as pl
-from deeprpi.model.embedding import load_esm, load_rnabert, ESMEmbedding, RNABertEmbedding
-from deeprpi.model.classifier import SimpleProteinRNAClassifier
-from deeprpi.utils import RPIDataset
-from deeprpi.config.glob import RNA_BASES, AMINO_ACIDS
-import numpy as np
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+import random
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     roc_curve, precision_recall_curve, average_precision_score, auc,
     confusion_matrix, classification_report
 )
-import matplotlib.pyplot as plt
-import seaborn as sns
-import random
-from pathlib import Path
 
+from deeprpi.utils.lightning_modules import ProteinRNALightningModule
+from deeprpi.utils.data import RPIDataset
 
-"""
-model_evaluation.py
-This script evaluates model performance on test and validation sets,
-generating performance metrics, visualization plots, and saving results to CSV files.
-"""
-
-# Set random seed for reproducibility
 def set_seed(seed=42):
-    """Set all random seeds to ensure reproducibility"""
+    """
+    Set all random seeds to ensure reproducibility.
+    
+    Args:
+        seed: Random seed value
+    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -35,42 +30,9 @@ def set_seed(seed=42):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-# Set seed
-set_seed(42)
-
-class ProteinRNALightningModule(pl.LightningModule):
-    def __init__(self, output_dim: int, hidden_dim: int = 256, dropout: float = 0.1):
-        """Initialize the model"""
-        super().__init__()
-        self.esm_embedding = ESMEmbedding(*load_esm(output_dim=output_dim), device=self.device)
-        self.rna_embedding = RNABertEmbedding(*load_rnabert(output_dim=output_dim), device=self.device)
-        
-        # ESM-2 output dimension is 1280, RNA-BERT output dimension is 120
-        protein_dim = 1280
-        rna_dim = 120
-        
-        # Initialize classifier with correct dimensions
-        self.classifier = SimpleProteinRNAClassifier(
-            protein_dim=protein_dim,
-            rna_dim=rna_dim,
-            hidden_dim=hidden_dim,
-            dropout=dropout
-        )
-        self.criterion = torch.nn.BCEWithLogitsLoss()
-        
-    def forward(self, protein_seqs, rna_seqs):
-        """Forward pass"""
-        # Get embeddings
-        protein_embeddings, _, _ = self.esm_embedding(protein_seqs)
-        rna_embeddings, _, _ = self.rna_embedding(rna_seqs)
-        
-        # Forward pass through classifier
-        logits, protein_attention, rna_attention = self.classifier(protein_embeddings, rna_embeddings)
-        return logits, protein_attention, rna_attention
-
 def plot_attention(attention_weights, title, save_path):
     """
-    Plot and save attention heatmap
+    Plot and save attention heatmap.
     
     Args:
         attention_weights: Attention weight matrix
@@ -134,7 +96,7 @@ def plot_attention(attention_weights, title, save_path):
 
 def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, checkpoint_path=None):
     """
-    Evaluate a dataset and generate a results report
+    Evaluate a dataset and generate a results report.
     
     Args:
         data_file: Path to the data file
@@ -142,7 +104,13 @@ def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, c
         is_val: Whether to use validation set (otherwise test set)
         save_attention: Whether to save attention plots
         checkpoint_path: Model checkpoint path
+        
+    Returns:
+        dict: Performance metrics
     """
+    # Set random seed for reproducibility
+    set_seed(42)
+    
     # Set up output directory
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
@@ -160,8 +128,8 @@ def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, c
     # Create dataset
     dataset = RPIDataset(
         data_path=data_file,
-        batch_size=2,
-        num_workers=0,
+        batch_size=8,
+        num_workers=4,
         rna_col='RNA_aa_code',
         protein_col='target_aa_code',
         label_col='Y',
@@ -169,8 +137,8 @@ def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, c
         rna_max_length=220,
         protein_max_length=500,
         truncation=True,
-        val_ratio=0.2,
-        test_ratio=0.2
+        val_ratio=0.1,
+        test_ratio=0.1
     )
     
     # Setup dataset
@@ -198,7 +166,8 @@ def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, c
     
     # Load checkpoint
     if checkpoint_path is None:
-        checkpoint_path = 'lightning_logs/protein_rna_classifier/version_21/checkpoints/best_model-epoch=00-val_f1=0.5962.ckpt'
+        # Try to find a checkpoint in the default location
+        checkpoint_path = 'lightning_logs/protein_rna_classifier/version_0/checkpoints/best_model-epoch=00-val_f1=0.8257.ckpt'
     
     print(f"Using model checkpoint: {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -229,10 +198,8 @@ def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, c
     for batch_idx, batch in enumerate(dataloader):
         print(f"Processing batch {batch_idx+1}/{len(dataloader)}...")
         
-        # Extract protein and RNA sequences from batch
-        protein_seqs = batch['protein_seq'].to(device)
-        rna_seqs = batch['rna_seq'].to(device)
-        labels = batch['label'].to(device)
+        # Process batch
+        rna_seqs, protein_seqs, labels = model._process_batch(batch)
         
         # Predict
         with torch.no_grad():
@@ -288,7 +255,7 @@ def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, c
     # Calculate confusion matrix
     cm = confusion_matrix(all_labels, predictions)
     tn, fp, fn, tp = cm.ravel()
-    specificity = tn / (tn + fp)
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
     
     # Calculate ROC curve and AUC
     fpr, tpr, _ = roc_curve(all_labels, all_probs)
@@ -380,41 +347,4 @@ def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, c
         'specificity': specificity,
         'auc': roc_auc,
         'ap': average_precision
-    }
-
-if __name__ == "__main__":
-    # Set random seed
-    set_seed(42)
-    
-    # Create results directory
-    result_dir = Path("prediction_results")
-    result_dir.mkdir(exist_ok=True, parents=True)
-    
-    # Data file path
-    data_file = "data/NPInter2.csv"
-    
-    # Evaluate validation set
-    print("\n===== Evaluating Validation Set =====")
-    val_metrics = evaluate_dataset(
-        data_file=data_file,
-        output_dir=result_dir,
-        is_val=True,
-        save_attention=True
-    )
-    
-    # Evaluate test set
-    print("\n===== Evaluating Test Set =====")
-    test_metrics = evaluate_dataset(
-        data_file=data_file,
-        output_dir=result_dir,
-        is_val=False,
-        save_attention=True
-    )
-    
-    # Print metric comparison
-    print("\n===== Performance Metrics Comparison =====")
-    metrics = ['accuracy', 'precision', 'recall', 'f1', 'auc']
-    print(f"{'Metric':<12} {'Validation':<10} {'Test':<10}")
-    print("-" * 32)
-    for metric in metrics:
-        print(f"{metric:<12} {val_metrics[metric]:.4f}     {test_metrics[metric]:.4f}") 
+    } 

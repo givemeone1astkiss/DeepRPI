@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from deeprpi.model.embedding import CrossAttention
+from deeprpi.model.attention import CrossAttention
 
 class SimpleProteinRNAClassifier(nn.Module):
     """
@@ -33,14 +32,14 @@ class SimpleProteinRNAClassifier(nn.Module):
         self.protein_pool = nn.AdaptiveAvgPool1d(1)
         self.rna_pool = nn.AdaptiveAvgPool1d(1)
         
-        # Create simple MLP
+        # Create MLP
         self.mlp = nn.Sequential(
             nn.Linear(protein_dim + rna_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, 1)
         )
-        
+    
     def forward(self, protein_embeddings: torch.Tensor, rna_embeddings: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass.
@@ -71,7 +70,7 @@ class SimpleProteinRNAClassifier(nn.Module):
             protein_embeddings,
             rna_embeddings
         )
-        
+            
         # Pool over sequence dimension to get fixed-dimension vectors
         # Transform dimensions to fit pooling layer input requirements: [batch, seq_len, dim] → [batch, dim, seq_len]
         protein_pooled = self.protein_pool(protein_attended.transpose(1, 2)).squeeze(-1)
