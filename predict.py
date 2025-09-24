@@ -22,7 +22,7 @@ def parse_args():
     parser.add_argument("--rna", type=str, required=True,
                         help="RNA sequence (nucleotide sequence)")
     
-    # 模型参数
+    # model checkpoint
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Model checkpoint path, default using pre-trained model")
     
