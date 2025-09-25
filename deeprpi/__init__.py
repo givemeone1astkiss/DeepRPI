@@ -6,5 +6,3 @@ from .utils.data import RPIDataset, Tokenizer
 from .utils.prediction import predict_interaction
 from .utils.evaluation import evaluate_dataset, set_seed
 from .utils.trainer import train_classifier
-from .evolution.mutator import RNAMutator
-from .evolution.optimizer import EvolutionOptimizer
