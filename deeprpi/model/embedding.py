@@ -1,5 +1,6 @@
 from typing import Tuple, Any
 import esm
+from esm import pretrained
 import torch
 import torch.nn as nn
 from torch import device
@@ -8,14 +9,14 @@ from multimolecule import RnaBertConfig, RnaBertModel
 from multimolecule.tokenisers.rna import RnaTokenizer
 
 
-def load_esm() -> Tuple[nn.Module, esm.Alphabet]:
+def load_esm() -> Tuple[nn.Module, Any]:
     """
     Load the ESM-1b model.
     
     :param output_dim: Dimension of the output embeddings. If None, same as model's embedding dimension.
     :return: The ESM-1b model and alphabet
     """
-    model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+    model, alphabet = pretrained.esm2_t33_650M_UR50D()
     model.eval()
     print("Model loaded successfully.")
     return model, alphabet

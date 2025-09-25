@@ -23,7 +23,7 @@ def parse_args():
                         help="RNA sequence (nucleotide sequence)")
     
     # model checkpoint
-    parser.add_argument("--checkpoint", type=str, default=None,
+    parser.add_argument("--checkpoint", type=str, default="model_checkpoint.ckpt",
                         help="Model checkpoint path, default using pre-trained model")
     
     # output parameters
