@@ -164,11 +164,7 @@ def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, c
         dropout=0.1
     )
     
-    # Load checkpoint
-    if checkpoint_path is None:
-        # Try to find a checkpoint in the default location
-        checkpoint_path = 'lightning_logs/protein_rna_classifier/version_0/checkpoints/best_model-epoch=00-val_f1=0.8257.ckpt'
-    
+
     print(f"Using model checkpoint: {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
     
