@@ -8,7 +8,7 @@ DeepRPI train script
 
 import argparse
 from pathlib import Path
-from deeprpi.utils import train_classifier, set_seed
+from deeprpi.utils import train_classifier
 
 def parse_args():
     """
@@ -32,9 +32,11 @@ def parse_args():
     parser.add_argument("--dropout", type=float, default=0.1,
                         help="Dropout rate")
     
-    # other parameters
-    parser.add_argument("--seed", type=int, default=42,
-                        help="Random seed")
+    # seed parameters
+    parser.add_argument("--model_seed", type=int, default=42,
+                        help="Random seed for model initialization and training")
+    parser.add_argument("--data_split_seed", type=int, default=42,
+                        help="Random seed for data splitting (should be fixed for reproducibility)")
     
     return parser.parse_args()
 
@@ -44,8 +46,8 @@ def main():
     """
     args = parse_args()
     
-    # Set random seed
-    set_seed(args.seed)
+    # Note: No global seed setting here to avoid affecting data splitting
+    # Data splitting seed is controlled in RPIDataset, model seed is controlled in train_classifier
     
     # Ensure output directory exists
     log_dir = Path("lightning_logs")
@@ -59,6 +61,8 @@ def main():
     print(f"Training epochs: {args.max_epochs}")
     print(f"Hidden layer dimension: {args.hidden_dim}")
     print(f"Dropout rate: {args.dropout}")
+    print(f"Model seed: {args.model_seed}")
+    print(f"Data split seed: {args.data_split_seed}")
     print("=" * 50)
     
     # Start training
@@ -68,7 +72,9 @@ def main():
         num_workers=args.num_workers,
         max_epochs=args.max_epochs,
         hidden_dim=args.hidden_dim,
-        dropout=args.dropout
+        dropout=args.dropout,
+        model_seed=args.model_seed,
+        data_split_seed=args.data_split_seed
     )
     
     # Print training results

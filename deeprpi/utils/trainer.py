@@ -15,7 +15,9 @@ def train_classifier(
     max_epochs=10,
     output_dim=1280,
     hidden_dim=256,
-    dropout=0.1
+    dropout=0.1,
+    model_seed=42,
+    data_split_seed=42
 ):
     """
     Train a protein-RNA classifier using PyTorch Lightning.
@@ -28,13 +30,15 @@ def train_classifier(
         output_dim: Output dimension for the classifier
         hidden_dim: Hidden layer dimension
         dropout: Dropout rate
+        model_seed: Random seed for model initialization and training
+        data_split_seed: Random seed for data splitting (should be fixed for reproducibility)
         
     Returns:
         Trained model and training results
     """
     try:
-        # Set random seed for reproducibility
-        pl.seed_everything(42)
+        # Set random seed for model initialization and training only
+        pl.seed_everything(model_seed)
         
         # Ensure all required directories exist
         print("Checking and creating necessary directories...")
@@ -46,7 +50,7 @@ def train_classifier(
         attention_dir.mkdir(exist_ok=True, parents=True)
         
         print("Starting to load dataset...")
-        # Load dataset
+        # Load dataset with fixed data split seed
         dataset = RPIDataset(
             data_path=data_path,
             batch_size=batch_size,
@@ -59,7 +63,8 @@ def train_classifier(
             protein_max_length=500,
             truncation=True,
             val_ratio=0.1,
-            test_ratio=0.1
+            test_ratio=0.1,
+            data_split_seed=data_split_seed
         )
         
         print("Setting up dataset...")
@@ -98,7 +103,7 @@ def train_classifier(
         trainer = pl.Trainer(
             max_epochs=max_epochs,
             accelerator='gpu' if torch.cuda.is_available() else 'cpu',
-            devices=[0] if torch.cuda.is_available() else None,
+            devices='auto' if torch.cuda.is_available() else None,
             callbacks=[checkpoint_callback],
             logger=logger,
             log_every_n_steps=50,

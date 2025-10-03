@@ -9,7 +9,7 @@ Evaluate the performance of DeepRPI model on test/validation set
 import argparse
 from pathlib import Path
 import pandas as pd
-from deeprpi.utils import evaluate_dataset, set_seed
+from deeprpi.utils import evaluate_dataset
 
 def parse_args():
     """
@@ -31,9 +31,9 @@ def parse_args():
     parser.add_argument("--eval_val", action="store_true", default=False,
                         help="Evaluate validation set (default evaluate test set)")
     
-    # other parameters
-    parser.add_argument("--seed", type=int, default=42,
-                        help="Random seed")
+    # seed parameters
+    parser.add_argument("--data_split_seed", type=int, default=42,
+                        help="Random seed for data splitting (must match training)")
     
     return parser.parse_args()
 
@@ -43,8 +43,8 @@ def main():
     """
     args = parse_args()
     
-    # Set random seed
-    set_seed(args.seed)
+    # Note: No global seed setting here to avoid affecting data splitting
+    # Data splitting seed is controlled in RPIDataset and must match training
     
     # Ensure output directory exists
     output_dir = Path(args.output_dir)
@@ -58,6 +58,7 @@ def main():
     print(f"Data file: {args.data_path}")
     print(f"Model checkpoint: {args.checkpoint or 'Default'}")
     print(f"Output directory: {args.output_dir}")
+    print(f"Data split seed: {args.data_split_seed}")
     print("=" * 50)
     
     # Evaluate dataset
@@ -66,7 +67,8 @@ def main():
         output_dir=args.output_dir,
         is_val=args.eval_val,
         save_attention=args.save_attention,
-        checkpoint_path=args.checkpoint
+        checkpoint_path=args.checkpoint,
+        data_split_seed=args.data_split_seed
     )
     
     # print evaluation results

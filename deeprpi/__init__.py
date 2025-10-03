@@ -4,5 +4,5 @@ from .model.attention import CrossAttention
 from .model.classifier import SimpleProteinRNAClassifier
 from .utils.data import RPIDataset, Tokenizer
 from .utils.prediction import predict_interaction
-from .utils.evaluation import evaluate_dataset, set_seed
+from .utils.evaluation import evaluate_dataset
 from .utils.trainer import train_classifier

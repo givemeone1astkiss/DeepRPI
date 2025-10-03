@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pandas as pd
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 from deeprpi.model.embedding import load_esm, load_rnabert, ESMEmbedding, RNABertEmbedding
@@ -28,9 +29,9 @@ class ProteinRNALightningModule(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         
-        # Initialize embeddings
-        self.esm_embedding = ESMEmbedding(*load_esm(), device=self.device)
-        self.rna_embedding = RNABertEmbedding(*load_rnabert(), device=self.device)
+        # Initialize embeddings (device will be set by Lightning)
+        self.esm_embedding = ESMEmbedding(*load_esm(), device='cpu')
+        self.rna_embedding = RNABertEmbedding(*load_rnabert(), device='cpu')
         
         # ESM-2 output dimension is 1280, RNA-BERT output dimension is 120
         protein_dim = 1280
@@ -49,6 +50,40 @@ class ProteinRNALightningModule(pl.LightningModule):
         self.attention_dir = Path("attention_maps")
         self.attention_dir.mkdir(exist_ok=True, parents=True)
         
+        # Create CSV logs directory
+        self.csv_logs_dir = Path("csv_logs")
+        self.csv_logs_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Initialize metrics storage for CSV
+        self.training_metrics = []
+        self.validation_metrics = []
+    
+    def on_train_start(self):
+        """Called when training starts, ensures all components are on the correct device"""
+        device = self.device
+        # Move embedding models to the correct device
+        self.esm_embedding.device = device
+        self.esm_embedding.model = self.esm_embedding.model.to(device)
+        self.rna_embedding.device = device
+        self.rna_embedding.model = self.rna_embedding.model.to(device)
+        print(f"Models moved to device: {device}")
+    
+    def on_validation_start(self):
+        """Called when validation starts, ensures all components are on the correct device"""
+        device = self.device
+        self.esm_embedding.device = device
+        self.esm_embedding.model = self.esm_embedding.model.to(device)
+        self.rna_embedding.device = device
+        self.rna_embedding.model = self.rna_embedding.model.to(device)
+    
+    def on_test_start(self):
+        """Called when testing starts, ensures all components are on the correct device"""
+        device = self.device
+        self.esm_embedding.device = device
+        self.esm_embedding.model = self.esm_embedding.model.to(device)
+        self.rna_embedding.device = device
+        self.rna_embedding.model = self.rna_embedding.model.to(device)
+        
     def forward(self, protein_seqs, rna_seqs):
         """
         Forward pass through the model.
@@ -63,6 +98,11 @@ class ProteinRNALightningModule(pl.LightningModule):
             - Protein-to-RNA attention weights
             - RNA-to-protein attention weights
         """
+        # Ensure sequences are on the correct device
+        device = self.device
+        protein_seqs = protein_seqs.to(device)
+        rna_seqs = rna_seqs.to(device)
+        
         # Get embeddings - default no pooling, preserve sequence dimension
         protein_embeddings, _, _ = self.esm_embedding(protein_seqs)
         rna_embeddings, _, _ = self.rna_embedding(rna_seqs)
@@ -204,6 +244,24 @@ class ProteinRNALightningModule(pl.LightningModule):
         self.log('train_acc', acc, on_step=True, on_epoch=True, prog_bar=True)
         self.log('train_f1', f1, on_step=True, on_epoch=True, prog_bar=True)
         
+        # Calculate additional metrics for CSV
+        precision = precision_score(labels.cpu().numpy(), preds.cpu().numpy(), zero_division=0)
+        recall = recall_score(labels.cpu().numpy(), preds.cpu().numpy(), zero_division=0)
+        
+        # Store metrics for CSV (only on epoch end)
+        if self.trainer.is_last_batch:
+            epoch = self.current_epoch
+            step = self.global_step
+            self.training_metrics.append({
+                'epoch': epoch,
+                'step': step,
+                'loss': loss.item(),
+                'accuracy': acc,
+                'f1': f1,
+                'precision': precision,
+                'recall': recall
+            })
+        
         # Save attention maps (every 500 batches)
         if batch_idx % 500 == 0 and protein_attention is not None:
             self._plot_attention(
@@ -244,7 +302,53 @@ class ProteinRNALightningModule(pl.LightningModule):
         self.log('val_acc', acc, on_step=True, on_epoch=True, prog_bar=True)
         self.log('val_f1', f1, on_step=True, on_epoch=True, prog_bar=True)
         
+        # Calculate additional metrics for CSV
+        precision = precision_score(labels.cpu().numpy(), preds.cpu().numpy(), zero_division=0)
+        recall = recall_score(labels.cpu().numpy(), preds.cpu().numpy(), zero_division=0)
+        
+        # Store metrics for CSV (only on epoch end)
+        if self.trainer.is_last_batch:
+            epoch = self.current_epoch
+            step = self.global_step
+            self.validation_metrics.append({
+                'epoch': epoch,
+                'step': step,
+                'loss': loss.item(),
+                'accuracy': acc,
+                'f1': f1,
+                'precision': precision,
+                'recall': recall
+            })
+        
         return {'val_loss': loss, 'val_acc': acc, 'val_f1': f1}
+    
+    def on_train_epoch_end(self):
+        """Called at the end of each training epoch to save CSV"""
+        if self.training_metrics:
+            # Aggregate metrics by epoch (take mean of all steps in this epoch)
+            df_train = pd.DataFrame(self.training_metrics)
+            epoch_metrics = df_train.groupby('epoch').agg({
+                'loss': 'mean',
+                'accuracy': 'mean', 
+                'f1': 'mean',
+                'precision': 'mean',
+                'recall': 'mean'
+            }).reset_index()
+            epoch_metrics.to_csv(self.csv_logs_dir / 'training_metrics.csv', index=False)
+            
+    def on_validation_epoch_end(self):
+        """Called at the end of each validation epoch to save CSV"""
+        if self.validation_metrics:
+            # Aggregate metrics by epoch (take mean of all steps in this epoch)
+            df_val = pd.DataFrame(self.validation_metrics)
+            epoch_metrics = df_val.groupby('epoch').agg({
+                'loss': 'mean',
+                'accuracy': 'mean',
+                'f1': 'mean', 
+                'precision': 'mean',
+                'recall': 'mean'
+            }).reset_index()
+            epoch_metrics.to_csv(self.csv_logs_dir / 'validation_metrics.csv', index=False)
     
     def test_step(self, batch, batch_idx):
         """

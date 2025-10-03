@@ -11,10 +11,9 @@ from multimolecule.tokenisers.rna import RnaTokenizer
 
 def load_esm() -> Tuple[nn.Module, Any]:
     """
-    Load the ESM-1b model.
+    Load the ESM-2 model.
     
-    :param output_dim: Dimension of the output embeddings. If None, same as model's embedding dimension.
-    :return: The ESM-1b model and alphabet
+    :return: The ESM-2 model and alphabet
     """
     model, alphabet = pretrained.esm2_t33_650M_UR50D()
     model.eval()
@@ -37,7 +36,7 @@ def load_rnabert() -> Tuple[nn.Module, RnaTokenizer]:
 
 class ESMEmbedding:
     """
-    To generate protein embeddings using ESM-1b model.
+    To generate protein embeddings using ESM-2 model.
     """
 
     def __init__(self, model, alphabet, device: device):

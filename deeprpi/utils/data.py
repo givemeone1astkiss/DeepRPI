@@ -192,12 +192,14 @@ class RPIDataset(LightningDataModule):
                  protein_max_length: int,
                  truncation: bool,
                  val_ratio: float=0.1,
-                 test_ratio: float=0.1):
+                 test_ratio: float=0.1,
+                 data_split_seed: int=42):
         super().__init__()
         self.data_path = data_path
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.truncation = truncation
+        self.data_split_seed = data_split_seed
         self.raw_data = read_csv(data_path, rna_col, protein_col, label_col)
         self.protein_tokenizer = Tokenizer.protein(padding=padding, max_length=protein_max_length, to_tensor=True)
         self.rna_tokenizer = Tokenizer.rna(padding=padding, max_length=rna_max_length, to_tensor=True)
@@ -227,12 +229,22 @@ class RPIDataset(LightningDataModule):
                                            self.embedded_protein,
                                            self.protein_mask,
                                            self.labels)
-        self.train_data, self.val_data, self.test_data = torch.utils.data.random_split(self.embedded_data,
-                                                                                       [int(len(self.embedded_data))-int(self.val_ratio*len(self.embedded_data))-int(self.test_ratio*len(self.embedded_data)),
-                                                                                        int(self.val_ratio*len(self.embedded_data)),
-                                                                                        int(self.test_ratio*len(self.embedded_data))])
+        
+        # Use fixed generator to ensure reproducible data splitting
+        generator = torch.Generator()
+        generator.manual_seed(self.data_split_seed)
+        
+        self.train_data, self.val_data, self.test_data = torch.utils.data.random_split(
+            self.embedded_data,
+            [int(len(self.embedded_data))-int(self.val_ratio*len(self.embedded_data))-int(self.test_ratio*len(self.embedded_data)),
+             int(self.val_ratio*len(self.embedded_data)),
+             int(self.test_ratio*len(self.embedded_data))],
+            generator=generator
+        )
 
     def _shuffle_data(self):
+        # Set random seed for data splitting to ensure reproducibility
+        np.random.seed(self.data_split_seed)
         index = np.arange(len(self.raw_data[0]))
         np.random.shuffle(index)
         rna_seqs = [self.raw_data[0][i] for i in tqdm(index, desc="Shuffling RNA sequences")]

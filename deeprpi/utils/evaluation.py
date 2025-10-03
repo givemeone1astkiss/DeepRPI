@@ -14,21 +14,6 @@ from sklearn.metrics import (
 from deeprpi.utils.lightning_modules import ProteinRNALightningModule
 from deeprpi.utils.data import RPIDataset
 
-def set_seed(seed=42):
-    """
-    Set all random seeds to ensure reproducibility.
-    
-    Args:
-        seed: Random seed value
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
 
 def plot_attention(attention_weights, title, save_path):
     """
@@ -94,7 +79,7 @@ def plot_attention(attention_weights, title, save_path):
     plt.savefig(save_path, dpi=300)
     plt.close()
 
-def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, checkpoint_path=None):
+def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, checkpoint_path=None, data_split_seed=42):
     """
     Evaluate a dataset and generate a results report.
     
@@ -104,12 +89,13 @@ def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, c
         is_val: Whether to use validation set (otherwise test set)
         save_attention: Whether to save attention plots
         checkpoint_path: Model checkpoint path
+        data_split_seed: Random seed for data splitting (must match training)
         
     Returns:
         dict: Performance metrics
     """
-    # Set random seed for reproducibility
-    set_seed(42)
+    # Note: No global seed setting here to avoid affecting data splitting
+    # Data splitting seed is controlled in RPIDataset
     
     # Set up output directory
     output_dir = Path(output_dir)
@@ -125,7 +111,7 @@ def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, c
     
     print(f"Loading dataset: {data_file}")
     
-    # Create dataset
+    # Create dataset with same data split seed as training
     dataset = RPIDataset(
         data_path=data_file,
         batch_size=8,
@@ -138,7 +124,8 @@ def evaluate_dataset(data_file, output_dir, is_val=False, save_attention=True, c
         protein_max_length=500,
         truncation=True,
         val_ratio=0.1,
-        test_ratio=0.1
+        test_ratio=0.1,
+        data_split_seed=data_split_seed
     )
     
     # Setup dataset
