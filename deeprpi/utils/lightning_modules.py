@@ -57,6 +57,25 @@ class ProteinRNALightningModule(pl.LightningModule):
         # Initialize metrics storage for CSV
         self.training_metrics = []
         self.validation_metrics = []
+        
+        # Batch interval for saving metrics (save every 100 batches)
+        self.save_interval = 100
+        
+        # Track current epoch metrics for memory efficiency
+        self.current_epoch_training_metrics = []
+        self.current_epoch_validation_metrics = []
+        
+        # Track metrics for batch averaging
+        self.batch_metrics_buffer = []
+        self.val_batch_metrics_buffer = []
+        
+        # Get process ID for distinguishing different processes
+        import os
+        self.process_id = os.getpid()
+        
+        # Track metrics for cross-process averaging
+        self.epoch_training_metrics_buffer = []
+        self.epoch_validation_metrics_buffer = []
     
     def on_train_start(self):
         """Called when training starts, ensures all components are on the correct device"""
@@ -67,6 +86,16 @@ class ProteinRNALightningModule(pl.LightningModule):
         self.rna_embedding.device = device
         self.rna_embedding.model = self.rna_embedding.model.to(device)
         print(f"Models moved to device: {device}")
+    
+    def on_train_epoch_start(self):
+        """Called at the start of each training epoch to clear current epoch metrics"""
+        self.current_epoch_training_metrics.clear()
+        print(f"Starting training epoch {self.current_epoch}")
+    
+    def on_validation_epoch_start(self):
+        """Called at the start of each validation epoch to clear current epoch metrics"""
+        self.current_epoch_validation_metrics.clear()
+        print(f"Starting validation epoch {self.current_epoch}")
     
     def on_validation_start(self):
         """Called when validation starts, ensures all components are on the correct device"""
@@ -248,31 +277,64 @@ class ProteinRNALightningModule(pl.LightningModule):
         precision = precision_score(labels.cpu().numpy(), preds.cpu().numpy(), zero_division=0)
         recall = recall_score(labels.cpu().numpy(), preds.cpu().numpy(), zero_division=0)
         
-        # Store metrics for CSV (only on epoch end)
-        if self.trainer.is_last_batch:
+        # Store metrics in buffer for averaging
+        self.batch_metrics_buffer.append({
+            'loss': loss.item(),
+            'accuracy': acc,
+            'f1': f1,
+            'precision': precision,
+            'recall': recall
+        })
+        
+        # Save averaged metrics every save_interval batches
+        if (batch_idx + 1) % self.save_interval == 0:
             epoch = self.current_epoch
             step = self.global_step
-            self.training_metrics.append({
+            
+            # Calculate average metrics over the last save_interval batches
+            avg_metrics = {
                 'epoch': epoch,
                 'step': step,
-                'loss': loss.item(),
-                'accuracy': acc,
-                'f1': f1,
-                'precision': precision,
-                'recall': recall
-            })
+                'batch_idx': batch_idx,
+                'process_id': self.process_id,
+                'loss': np.mean([m['loss'] for m in self.batch_metrics_buffer]),
+                'accuracy': np.mean([m['accuracy'] for m in self.batch_metrics_buffer]),
+                'f1': np.mean([m['f1'] for m in self.batch_metrics_buffer]),
+                'precision': np.mean([m['precision'] for m in self.batch_metrics_buffer]),
+                'recall': np.mean([m['recall'] for m in self.batch_metrics_buffer])
+            }
+            
+            # Append to CSV file directly
+            csv_file = self.csv_logs_dir / 'training_metrics.csv'
+            if csv_file.exists():
+                # Append to existing file
+                df_new = pd.DataFrame([avg_metrics])
+                df_new.to_csv(csv_file, mode='a', header=False, index=False)
+            else:
+                # Create new file with header
+                df_new = pd.DataFrame([avg_metrics])
+                df_new.to_csv(csv_file, index=False)
+            
+            # Also store in memory for epoch-level aggregation
+            self.training_metrics.append(avg_metrics)
+            self.current_epoch_training_metrics.append(avg_metrics)
+            self.epoch_training_metrics_buffer.append(avg_metrics)
+            
+            # Clear buffer for next interval
+            self.batch_metrics_buffer.clear()
         
         # Save attention maps (every 500 batches)
         if batch_idx % 500 == 0 and protein_attention is not None:
+            epoch = self.current_epoch
             self._plot_attention(
                 protein_attention[0],  # Take attention of the first sample
-                f"Protein to RNA Attention (Batch {batch_idx})",
-                self.attention_dir / f"protein_attention_batch_{batch_idx}.png"
+                f"Protein to RNA Attention (Epoch {epoch}, Batch {batch_idx})",
+                self.attention_dir / f"protein_attention_epoch_{epoch}_batch_{batch_idx}.png"
             )
             self._plot_attention(
                 rna_attention[0],  # Take attention of the first sample
-                f"RNA to Protein Attention (Batch {batch_idx})",
-                self.attention_dir / f"rna_attention_batch_{batch_idx}.png"
+                f"RNA to Protein Attention (Epoch {epoch}, Batch {batch_idx})",
+                self.attention_dir / f"rna_attention_epoch_{epoch}_batch_{batch_idx}.png"
             )
         
         return loss
@@ -306,49 +368,163 @@ class ProteinRNALightningModule(pl.LightningModule):
         precision = precision_score(labels.cpu().numpy(), preds.cpu().numpy(), zero_division=0)
         recall = recall_score(labels.cpu().numpy(), preds.cpu().numpy(), zero_division=0)
         
-        # Store metrics for CSV (only on epoch end)
-        if self.trainer.is_last_batch:
+        # Store metrics in buffer for averaging
+        self.val_batch_metrics_buffer.append({
+            'loss': loss.item(),
+            'accuracy': acc,
+            'f1': f1,
+            'precision': precision,
+            'recall': recall
+        })
+        
+        # Save averaged metrics every save_interval batches
+        if (batch_idx + 1) % self.save_interval == 0:
             epoch = self.current_epoch
             step = self.global_step
-            self.validation_metrics.append({
+            
+            # Calculate average metrics over the last save_interval batches
+            avg_metrics = {
                 'epoch': epoch,
                 'step': step,
-                'loss': loss.item(),
-                'accuracy': acc,
-                'f1': f1,
-                'precision': precision,
-                'recall': recall
-            })
+                'batch_idx': f"val_{batch_idx}",
+                'process_id': self.process_id,
+                'loss': np.mean([m['loss'] for m in self.val_batch_metrics_buffer]),
+                'accuracy': np.mean([m['accuracy'] for m in self.val_batch_metrics_buffer]),
+                'f1': np.mean([m['f1'] for m in self.val_batch_metrics_buffer]),
+                'precision': np.mean([m['precision'] for m in self.val_batch_metrics_buffer]),
+                'recall': np.mean([m['recall'] for m in self.val_batch_metrics_buffer])
+            }
+            
+            # Append to CSV file directly (more efficient than rewriting entire file)
+            csv_file = self.csv_logs_dir / 'validation_metrics.csv'
+            if csv_file.exists():
+                # Append to existing file
+                df_new = pd.DataFrame([avg_metrics])
+                df_new.to_csv(csv_file, mode='a', header=False, index=False)
+            else:
+                # Create new file with header
+                df_new = pd.DataFrame([avg_metrics])
+                df_new.to_csv(csv_file, index=False)
+            
+            # Also store in memory for epoch-level aggregation
+            self.validation_metrics.append(avg_metrics)
+            self.current_epoch_validation_metrics.append(avg_metrics)
+            self.epoch_validation_metrics_buffer.append(avg_metrics)
+            
+            # Clear buffer for next interval
+            self.val_batch_metrics_buffer.clear()
         
         return {'val_loss': loss, 'val_acc': acc, 'val_f1': f1}
     
     def on_train_epoch_end(self):
-        """Called at the end of each training epoch to save CSV"""
-        if self.training_metrics:
-            # Aggregate metrics by epoch (take mean of all steps in this epoch)
-            df_train = pd.DataFrame(self.training_metrics)
-            epoch_metrics = df_train.groupby('epoch').agg({
-                'loss': 'mean',
-                'accuracy': 'mean', 
-                'f1': 'mean',
-                'precision': 'mean',
-                'recall': 'mean'
-            }).reset_index()
-            epoch_metrics.to_csv(self.csv_logs_dir / 'training_metrics.csv', index=False)
+        """Called at the end of each training epoch to save epoch-level aggregated metrics"""
+        print(f"on_train_epoch_end called for epoch {self.current_epoch}")
+        
+        if self.epoch_training_metrics_buffer:
+            try:
+                # Gather metrics from all processes
+                gathered_metrics = self.all_gather(self.epoch_training_metrics_buffer)
+                
+                # Flatten the gathered metrics (it comes as a list of lists)
+                all_metrics = []
+                for process_metrics in gathered_metrics:
+                    all_metrics.extend(process_metrics)
+                
+                if all_metrics:
+                    # Calculate cross-process average
+                    df_all = pd.DataFrame(all_metrics)
+                    current_epoch = self.current_epoch
+                    
+                    print(f"Found {len(df_all)} training metrics across all processes for epoch {current_epoch}")
+                    
+                    # Calculate mean metrics across all processes
+                    epoch_summary = {
+                        'epoch': current_epoch,
+                        'loss': df_all['loss'].mean(),
+                        'accuracy': df_all['accuracy'].mean(),
+                        'f1': df_all['f1'].mean(),
+                        'precision': df_all['precision'].mean(),
+                        'recall': df_all['recall'].mean()
+                    }
+                    
+                    print(f"Epoch {current_epoch} cross-process training summary: {epoch_summary}")
+                    
+                    # Only save from main process to avoid duplicate files
+                    if self.trainer.is_global_zero:
+                        # Append to epoch-level CSV (create if doesn't exist)
+                        epoch_file = self.csv_logs_dir / 'training_epoch_metrics.csv'
+                        if epoch_file.exists():
+                            df_epoch = pd.read_csv(epoch_file)
+                            df_epoch = pd.concat([df_epoch, pd.DataFrame([epoch_summary])], ignore_index=True)
+                        else:
+                            df_epoch = pd.DataFrame([epoch_summary])
+                        
+                        df_epoch.to_csv(epoch_file, index=False)
+                        print(f"Saved epoch {current_epoch} cross-process training metrics to {epoch_file}")
+                
+                # Clear current epoch metrics to free memory
+                self.current_epoch_training_metrics.clear()
+                self.epoch_training_metrics_buffer.clear()
+                
+            except Exception as e:
+                print(f"Error in on_train_epoch_end: {e}")
+        else:
+            print("No training metrics available for current epoch")
             
     def on_validation_epoch_end(self):
-        """Called at the end of each validation epoch to save CSV"""
-        if self.validation_metrics:
-            # Aggregate metrics by epoch (take mean of all steps in this epoch)
-            df_val = pd.DataFrame(self.validation_metrics)
-            epoch_metrics = df_val.groupby('epoch').agg({
-                'loss': 'mean',
-                'accuracy': 'mean',
-                'f1': 'mean', 
-                'precision': 'mean',
-                'recall': 'mean'
-            }).reset_index()
-            epoch_metrics.to_csv(self.csv_logs_dir / 'validation_metrics.csv', index=False)
+        """Called at the end of each validation epoch to save epoch-level aggregated metrics"""
+        print(f"on_validation_epoch_end called for epoch {self.current_epoch}")
+        
+        if self.epoch_validation_metrics_buffer:
+            try:
+                # Gather metrics from all processes
+                gathered_metrics = self.all_gather(self.epoch_validation_metrics_buffer)
+                
+                # Flatten the gathered metrics (it comes as a list of lists)
+                all_metrics = []
+                for process_metrics in gathered_metrics:
+                    all_metrics.extend(process_metrics)
+                
+                if all_metrics:
+                    # Calculate cross-process average
+                    df_all = pd.DataFrame(all_metrics)
+                    current_epoch = self.current_epoch
+                    
+                    print(f"Found {len(df_all)} validation metrics across all processes for epoch {current_epoch}")
+                    
+                    # Calculate mean metrics across all processes
+                    epoch_summary = {
+                        'epoch': current_epoch,
+                        'loss': df_all['loss'].mean(),
+                        'accuracy': df_all['accuracy'].mean(),
+                        'f1': df_all['f1'].mean(),
+                        'precision': df_all['precision'].mean(),
+                        'recall': df_all['recall'].mean()
+                    }
+                    
+                    print(f"Epoch {current_epoch} cross-process validation summary: {epoch_summary}")
+                    
+                    # Only save from main process to avoid duplicate files
+                    if self.trainer.is_global_zero:
+                        # Append to epoch-level CSV (create if doesn't exist)
+                        epoch_file = self.csv_logs_dir / 'validation_epoch_metrics.csv'
+                        if epoch_file.exists():
+                            df_epoch = pd.read_csv(epoch_file)
+                            df_epoch = pd.concat([df_epoch, pd.DataFrame([epoch_summary])], ignore_index=True)
+                        else:
+                            df_epoch = pd.DataFrame([epoch_summary])
+                        
+                        df_epoch.to_csv(epoch_file, index=False)
+                        print(f"Saved epoch {current_epoch} cross-process validation metrics to {epoch_file}")
+                
+                # Clear current epoch metrics to free memory
+                self.current_epoch_validation_metrics.clear()
+                self.epoch_validation_metrics_buffer.clear()
+                
+            except Exception as e:
+                print(f"Error in on_validation_epoch_end: {e}")
+        else:
+            print("No validation metrics available for current epoch")
     
     def test_step(self, batch, batch_idx):
         """
@@ -379,15 +555,18 @@ class ProteinRNALightningModule(pl.LightningModule):
         
         # Save test set attention maps (only for the first batch)
         if batch_idx == 0 and protein_attention is not None and rna_attention is not None:
+            # Use a timestamp or test identifier instead of epoch for test
+            import time
+            test_id = int(time.time())
             self._plot_attention(
                 protein_attention[0],
-                f"Test Protein to RNA Attention (Batch {batch_idx})",
-                self.attention_dir / f"test_protein_attention_batch_{batch_idx}.png"
+                f"Test Protein to RNA Attention (Test ID: {test_id}, Batch {batch_idx})",
+                self.attention_dir / f"test_protein_attention_id_{test_id}_batch_{batch_idx}.png"
             )
             self._plot_attention(
                 rna_attention[0],
-                f"Test RNA to Protein Attention (Batch {batch_idx})",
-                self.attention_dir / f"test_rna_attention_batch_{batch_idx}.png"
+                f"Test RNA to Protein Attention (Test ID: {test_id}, Batch {batch_idx})",
+                self.attention_dir / f"test_rna_attention_id_{test_id}_batch_{batch_idx}.png"
             )
         
         return {'test_acc': acc, 'test_precision': precision, 'test_recall': recall, 'test_f1': f1}
