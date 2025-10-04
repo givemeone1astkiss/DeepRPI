@@ -113,6 +113,7 @@ def train_classifier(
             limit_val_batches=0.5,
             limit_test_batches=0.5,
             num_sanity_val_steps=0,
+            val_check_interval=100
         )
         
         print("Starting model training...")
