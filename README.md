@@ -44,7 +44,7 @@ DeepRPI/
 ├── evaluate.py                   # Evaluation entry script
 ├── plot_metrics.py              # Training metrics visualization script
 ├── run.sh                        # Automated training script
-├── model_checkpoint.ckpt         # Pretrained model checkpoint
+├── model_checkpoint.ckpt         # Pretrained model checkpoint (managed by Git LFS)
 └── requirements.txt              # Python dependencies
 ```
 
@@ -53,18 +53,31 @@ DeepRPI/
 ### Prerequisites
 
 - Python 3.8 or higher
+- Git LFS (for model files)
 - CUDA-compatible GPU (recommended)
 - 8GB+ RAM
 
 ### Quick Install
 
-1. **Clone the repository:**
+1. **Install Git LFS (if not already installed):**
 ```bash
+# macOS
+brew install git-lfs
+
+# Ubuntu/Debian
+sudo apt install git-lfs
+
+# Windows: Download from https://git-lfs.github.io/
+```
+
+2. **Clone the repository:**
+```bash
+git lfs install
 git clone https://github.com/givemeone1astkiss/DeepRPI.git
 cd DeepRPI
 ```
 
-2. **Create virtual environment (recommended):**
+3. **Create virtual environment (recommended):**
 ```bash
 python -m venv deeprpi_env
 source deeprpi_env/bin/activate  # Linux/Mac
@@ -72,15 +85,24 @@ source deeprpi_env/bin/activate  # Linux/Mac
 deeprpi_env\Scripts\activate  # Windows
 ```
 
-3. **Install dependencies:**
+4. **Install dependencies:**
 ```bash
 pip install -r requirements.txt
 ```
 
-4. **Verify installation:**
+5. **Verify installation:**
 ```bash
 python -c "import torch; print('PyTorch version:', torch.__version__)"
 python -c "import fair_esm; print('ESM installed successfully')"
+```
+
+### Model Files
+
+The project includes a pretrained model checkpoint (`model_checkpoint.ckpt`) that is managed using Git LFS due to its large size (169MB). When you clone the repository, make sure Git LFS is properly installed and configured to download the model file automatically.
+
+If you encounter issues with the model file not being downloaded, you can manually pull it using:
+```bash
+git lfs pull
 ```
 
 ### Dependencies
